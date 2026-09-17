@@ -19,19 +19,19 @@ A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead el
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS GET
                             ▼
-┌────────────────────────────────────────────────────────┐
-│             GitHub Actions Serverless Runner           │
-│          Scheduled: 15:00 Europe/Helsinki Daily        │
-│                                                        │
-│  1. Pulls pricing data for 14:00 today to 14:00 tomorrow│
-│  2. Evaluates thresholds:                              │
-│       • < 10.00 c/kWh  --> Green  (🟢)                 │
-│       • 10.00-19.99 c  --> Orange (🟠)                 │
-│       • >= 20.00 c     --> Red    (🔴)                 │
-│  3. Compresses 24 discrete hours into grouped blocks   │
-│  4. Calculates average, lowest, and highest spread     │
-│  5. Formats monospace text for responsive rendering    │
-└───────────────────────────┬────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│             GitHub Actions Serverless Runner              │
+│          Scheduled: 15:00 Europe/Helsinki Daily           │
+│                                                           │
+│  1. Pulls pricing data for 14:00 today to 14:00 tomorrow  │
+│  2. Evaluates thresholds:                                 │
+│       • < 10.00 c/kWh  --> Green  (🟢)                    │
+│       • 10.00-19.99 c  --> Orange (🟠)                    │
+│       • >= 20.00 c     --> Red    (🔴)                    │
+│  3. Compresses 24 discrete hours into grouped blocks      │
+│  4. Calculates average, lowest, and highest spread        │
+│  5. Formats monospace text for responsive rendering       │
+└───────────────────────────┬───────────────────────────────┘
                             │ HTTPS POST
                             ▼
 ┌────────────────────────────────────────────────────────┐
