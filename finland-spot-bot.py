@@ -1,9 +1,15 @@
+import os
+import sys
 import datetime
 import zoneinfo
 import requests
 
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+if not BOT_TOKEN or not CHAT_ID:
+    print("Error: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID environment variables.")
+    sys.exit(1)
 
 HELSINKI_TZ = zoneinfo.ZoneInfo("Europe/Helsinki")
 
@@ -18,7 +24,6 @@ def get_tier(price_cents: float) -> str:
 def main():
     now = datetime.datetime.now(HELSINKI_TZ)
     
-    # 14:00 today to 14:00 tomorrow
     start_dt = now.replace(hour=14, minute=0, second=0, microsecond=0)
     end_dt = start_dt + datetime.timedelta(days=1)
     
@@ -31,23 +36,19 @@ def main():
     for item in prices:
         utc_dt = datetime.datetime.fromisoformat(item["startDate"].replace("Z", "+00:00"))
         local_dt = utc_dt.astimezone(HELSINKI_TZ)
-        
         if start_dt <= local_dt < end_dt:
             window_data.append((local_dt, float(item["price"])))
 
     window_data.sort(key=lambda x: x[0])
-
     if not window_data:
-        print("No price data found for the window.")
+        print("No price data found.")
         return
 
-    # Overall Summary
     price_vals = [p for _, p in window_data]
     avg_price = sum(price_vals) / len(price_vals)
     min_price = min(price_vals)
     max_price = max(price_vals)
 
-    # Group consecutive hours in the same price tier
     blocks = []
     current_block = None
 
@@ -69,7 +70,6 @@ def main():
     if current_block:
         blocks.append(current_block)
 
-    # Build Telegram message
     msg_lines = [
         "⚡ <b>Finland Spot Prices</b>",
         f"📅 <i>{start_dt.strftime('%d.%m %H:%M')} – {end_dt.strftime('%d.%m %H:%M')}</i>\n",
@@ -81,17 +81,13 @@ def main():
         count = len(b["prices"])
         avg_b = sum(b["prices"]) / count
         min_b, max_b = min(b["prices"]), max(b["prices"])
-        
         time_range = f"{b['start'].strftime('%H:00')}–{b['end'].strftime('%H:00')}"
         price_spread = f"{min_b:.2f} c" if count == 1 else f"{min_b:.2f} - {max_b:.2f} c"
-        
-        # Example line: 🟢 14:00–17:00  (3h)  avg  5.50 c  [3.20 - 7.10 c]
         msg_lines.append(f"{b['tier']} {time_range:<11} ({count}h)  avg {avg_b:>5.2f} c  [{price_spread}]")
 
     msg_lines.append("</pre>")
     final_message = "\n".join(msg_lines)
 
-    # Send message
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         json={"chat_id": CHAT_ID, "text": final_message, "parse_mode": "HTML"},

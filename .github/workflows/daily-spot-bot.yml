@@ -1,0 +1,32 @@
+name: Daily Spot Price Alert
+
+on:
+  schedule:
+    # 15:00 Helsinki time:
+    # - Summer (EEST / UTC+3): 12:00 UTC
+    # - Winter (EET / UTC+2):  13:00 UTC
+    # To run at 15:00 year-round, set schedule.timezone:
+    - cron: '0 15 * * *'
+      timezone: 'Europe/Helsinki'
+  workflow_dispatch: # Allows manual trigger from the GitHub web UI
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Spot Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python finland-spot-bot.py
