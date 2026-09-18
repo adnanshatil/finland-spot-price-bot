@@ -1,6 +1,8 @@
 # Finland Spot Price Telegram Alert: Setup & Architecture Guide
 
-A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead electricity spot prices and pushes a concise, color-coded daily digest to Telegram at 15:00 Europe/Helsinki time.
+A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead electricity spot prices and pushes a concise, color-coded daily digest to Telegram at 15:00 Europe/Helsinki time using Modal cloud infrastructure.
+
+> **Pricing & Tier Disclaimer**: Modal provides **$30 USD / ~€30 EUR in free compute credits every month** on their Community Tier. A lightweight job running for 3–5 seconds once per day consumes fractions of a cent per month, operating well within the complimentary monthly allowance at zero recurring cost.
 
 ---
 
@@ -20,7 +22,7 @@ A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead el
                             │ HTTPS GET
                             ▼
 ┌───────────────────────────────────────────────────────────┐
-│             GitHub Actions Serverless Runner              │
+│               Modal Serverless Cloud Runner               │
 │          Scheduled: 15:00 Europe/Helsinki Daily           │
 │                                                           │
 │  1. Pulls pricing data for 14:00 today to 14:00 tomorrow  │
@@ -43,23 +45,23 @@ A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead el
 ┌────────────────────────────────────────────────────────┐
 │                   Telegram Subscriber                  │
 │             Instant grouped summary view               │
-└────────────────────────────────────────────────────────┘
+└───────────────────────────┌────────────────────────────┘
 ```
 
 ---
 
 ## 2. Project File Structure
 
-To keep deployment clean and dependency-free, this architecture requires only two files in the repository:
+To deploy the service, organize your project directory as follows:
 
 ```text
 finland-spot-bot/
-├── .github/
-│   └── workflows/
-│       └── daily_spot.yml    # Cron orchestration and environment mapping
-├── spot_bot.py               # Data extraction, interval grouping, API dispatch
-└── README.md                 # System overview and operational runbook
+├── daily_spot_app.py        # Modal serverless wrapper, container definition, & cron trigger
+├── finland_spot_bot.py      # Core data retrieval, interval grouping, & Telegram alert logic
+└── README.md                # System overview and operational runbook
 ```
+
+> **Note on Naming Conventions**: Standard Python module imports require underscores rather than hyphens. Ensure your core script file is named `finland_spot_bot.py` (not `finland-spot-bot.py`) so `daily_spot_app.py` can import it cleanly.
 
 ---
 
@@ -81,77 +83,147 @@ Before deploying the runner, configure an endpoint bot and obtain your personal 
 ### 3.2 Initialize Chat & Retrieve Chat ID
 A Telegram bot cannot originate an unsolicited message to an individual account without prior opt-in.
 1. Open the direct link provided by `@BotFather` (e.g., `t.me/fi_spot_alert_v1_bot`).
-2. Click **Start** to open a channel between your personal profile and the bot.
+2. Click **Start** to open a direct channel between your personal profile and the bot.
 3. Search for the account `@userinfobot` in Telegram and send `/start`.
 4. Copy the numeric ID from the response (e.g., `123456789`). This is your `TELEGRAM_CHAT_ID`.
 
 ---
 
-## 4. GitHub Secret Storage
+## 4. Local Environment Setup & Modal Installation
 
-Credentials must never be hard-coded into version control repositories. Store them as encrypted secrets:
+Modern operating systems (macOS, Debian/Ubuntu) protect system-wide Python with PEP 668 (`externally-managed-environment`), preventing bare `pip install` commands. Always install Modal inside a dedicated virtual environment.
 
-1. Open your repository on GitHub.
-2. Navigate to **Settings** along the primary tab bar.
-3. On the left navigation pane, expand **Secrets and variables** and select **Actions**.
-4. In the **Repository secrets** section, click **New repository secret**.
-5. Add the first variable:
-   * **Name**: `TELEGRAM_BOT_TOKEN`
-   * **Secret**: *(Paste your token obtained from BotFather)*
-6. Click **Add secret**.
-7. Click **New repository secret** again to add the second variable:
-   * **Name**: `TELEGRAM_CHAT_ID`
-   * **Secret**: *(Paste your numeric Telegram Chat ID)*
-8. Click **Add secret**.
+### 4.1 Create and Activate Virtual Environment
+Open your terminal inside the `finland-spot-bot` directory and execute:
 
----
+```bash
+# Create an isolated virtual environment named .venv
+python3 -m venv .venv
 
-## 5. Workflow Scheduling & Timezone Logic
+# Activate the virtual environment
+# On macOS / Linux:
+source .venv/bin/activate
 
-The automation schedule utilizes GitHub's native cron syntax paired with the `Europe/Helsinki` IANA timezone identifier:
-
-```yaml
-schedule:
-  - cron: '0 15 * * *'
-    timezone: 'Europe/Helsinki'
+# On Windows (PowerShell):
+# .venv\Scripts\Activate.ps1
 ```
 
-### Why Native Timezones Matter
-* **Daylight Saving Time (DST) Handling**: Finland shifts between Eastern European Time (EET, UTC+2) during winter and Eastern European Summer Time (EEST, UTC+3) during summer. Specifying `timezone: 'Europe/Helsinki'` ensures execution remains pinned to 15:00 local time year-round without manual cron edits in October and March.
-* **Execution Window Alignment**: Nord Pool prices for the following day are finalized and released by 13:45–14:00 EET. Triggering daily at 15:00 guarantees 100% data availability for both the current afternoon and the full 24-hour forward lookahead.
+Confirm that your terminal prompt shows `(.venv)`.
+
+### 4.2 Install Modal Client
+With your virtual environment activated, install the Modal CLI:
+
+```bash
+pip install modal
+```
+
+### 4.3 Authenticate Modal CLI
+Link your local terminal session to your Modal cloud account:
+
+```bash
+modal setup
+```
+
+This command opens an authentication window in your default web browser. Sign in using GitHub or Google. Once authenticated, your local terminal registers an encrypted access token automatically.
 
 ---
 
-## 6. Price Grouping & Aggregation Engine
+## 5. Modal Secret Configuration
 
-Raw feeds emit 24 individual hourly records. Scanning 24 discrete rows on mobile devices introduces visual clutter. The aggregation engine condenses this stream using contiguous block grouping.
+Credentials must never be hardcoded into version control or application files. Store them securely in Modal’s encrypted secret manager:
 
-### Classification Matrix
-| Tier Threshold | Visual Indicator | Energy Implication |
-| :--- | :---: | :--- |
-| Below 10.00 c/kWh | 🟢 | **Favorable**: Ideal for EV charging, heating water, major appliances |
-| 10.00 to 19.99 c/kWh | 🟠 | **Moderate**: Baseline consumption; standard household operation |
-| 20.00 c/kWh and above | 🔴 | **Peak Alert**: Restrict heavy loads, pause automated EV charging |
+```bash
+modal secret create telegram-secrets TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_HERE" TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"
+```
 
-### Contiguous Grouping Mechanism
-Rather than bucketing arbitrary periods, the script walks chronological hours and aggregates adjacent hours if and only if they maintain the same color tier:
-* If 14:00, 15:00, and 16:00 are all under 10c, they are merged into one entry: `14:00–17:00 (3h)`.
-* When the price enters the orange bracket at 17:00, the previous block closes, and a new group begins.
-* For each block, the engine displays:
-  * Inclusive start and exclusive end time
-  * Total duration in hours
-  * Mathematical average price (`avg X.XX c`)
-  * Lowest and highest boundaries in brackets (`[min - max c]`)
+Verify that the secret is registered:
+
+```bash
+modal secret list
+```
 
 ---
 
-## 7. Sample Notification Output
+## 6. Scheduling, Timezone Logic, & Deployment
 
-The alert is pushed in a monospace container to ensure aligned tabular formatting across iOS, Android, macOS, and Windows Telegram clients:
+### 6.1 Application Implementation Overview
+* **`finland_spot_bot.py`**: Handles API requests to `api.porssisahko.net`, computes price metrics, groups adjacent hours by cost thresholds, and dispatches the HTML payload to Telegram.
+* **`daily_spot_app.py`**: Defines a lightweight container image based on `debian-slim`, preinstalls `requests`, includes `finland_spot_bot.py`, attaches the `telegram-secrets` vault, and schedules execution with a native timezone cron expression.
+
+### 6.2 Why Modal Cron Solves Daylight Saving Time (DST)
+* Finland transitions between Eastern European Time (EET, UTC+2) in winter and Eastern European Summer Time (EEST, UTC+3) in summer.
+* Modal natively supports IANA timezone definitions (`timezone="Europe/Helsinki"`) within its cron decorator (`0 15 * * *`). The engine recalculates UTC offsets automatically, executing at 15:00 local time every single day without manual cron adjustments.
+* Unlike general CI/CD queues, Modal scheduled functions fire on dedicated serverless infrastructure without queue delays.
+
+### 6.3 Deployment Commands
+
+#### Step 1: Execute an Instant Cloud Test
+Verify that your bot script and Telegram secrets operate correctly in the cloud before establishing the daily cron trigger:
+
+```bash
+modal run daily_spot_app.py::run_spot_alert
+```
+
+Within a few seconds, Modal will spin up a transient cloud container, run the script, and deliver the price alert directly to your Telegram chat.
+
+#### Step 2: Deploy the Persistent Daily Schedule
+Publish the scheduled app to run continuously in the cloud:
+
+```bash
+modal deploy daily_spot_app.py
+```
+
+The terminal will return a deployment summary containing your application's permanent dashboard URL.
+
+---
+
+## 7. Operational Management & Manual Triggers
+
+Once deployed, you do not need to keep your local machine powered on or connected to the internet.
+
+### 7.1 Triggering an On-Demand Run
+To test or force a run at any time without altering the 15:00 schedule:
+
+* **Using the Modal CLI**:
+  ```bash
+  modal run daily_spot_app.py::run_spot_alert
+  ```
+
+* **Using Remote Function Lookup (from any Python terminal)**:
+  ```bash
+  python3 -c "import modal; f = modal.Function.lookup('daily-spot-bot', 'run_spot_alert'); f.remote()"
+  ```
+
+* **Using the Web Dashboard**:
+  Open the [Modal Web Dashboard](https://modal.com/apps) or run:
+  ```bash
+  modal dashboard
+  ```
+  Navigate to `daily-spot-bot` and click **Run** on the `run_spot_alert` function.
+
+### 7.2 Viewing Real-Time Logs
+To stream live cloud execution logs directly to your local terminal:
+
+```bash
+modal app logs daily-spot-bot
+```
+
+### 7.3 Stopping or Deleting the Deployment
+If you ever want to pause or delete the scheduled alert:
+
+```bash
+modal app stop daily-spot-bot
+```
+
+---
+
+## 8. Sample Notification Output
+
+The alert renders inside a monospace `<pre>` block to ensure uniform tabular column alignment across mobile and desktop clients:
 
 ```text
 ⚡ Finland Spot Prices
-📅 17.09 14:00 – 18.09 14:00
+📅 18.09 14:00 – 19.09 14:00
 
 📊 Avg: 8.42 c | Min: 2.10 c | Max: 24.15 c
 
@@ -166,24 +238,13 @@ The alert is pushed in a monospace container to ensure aligned tabular formattin
 
 ---
 
-## 8. Manual Triggering & Verification
-
-You can verify the deployment immediately without waiting for the 15:00 schedule:
-
-1. In your GitHub repository, click the **Actions** tab.
-2. Under **All workflows** on the left menu, select **Daily Finland Spot Price Alert**.
-3. In the blue notification banner on the right, open the **Run workflow** dropdown.
-4. Leave the target branch set to `main` and click **Run workflow**.
-5. Within 15 to 30 seconds, a green checkmark will appear under the run history, and the notification will arrive in your Telegram app.
-
----
-
-## 9. Failure Modes & Operational Runbook
+## 9. Troubleshooting & Operational Runbook
 
 | Observation | Root Cause | Remediation Procedure |
 | :--- | :--- | :--- |
-| GitHub Action fails with exit code `1` | Missing repository secrets | Verify exact spelling of `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` under repository settings. |
-| Telegram returns `HTTP 401 Unauthorized` | Invalid bot authentication | Verify that no extraneous whitespace or quotation marks were pasted into the GitHub secret. |
-| Telegram returns `HTTP 400 Bad Request` | Bot chat not initiated | Open the bot in Telegram and send `/start` to establish communication. |
-| Script reports incomplete pricing window | Premature execution | Nord Pool occasionally encounters publishing delays. The 15:00 schedule provides a 60-minute buffer beyond the standard 14:00 market close. |
-| Workflow starts a few minutes past 15:00 | GitHub Actions shared runner queue | GitHub queues scheduled workflows during periods of peak worldwide load. The script queries a fixed 14:00–14:00 target window, meaning calculations remain accurate regardless of minor queue delays. |
+| `externally-managed-environment` error during install | System Python blocks raw pip installs | Create and activate a virtual environment (`python3 -m venv .venv && source .venv/bin/activate`) before running `pip install modal`. |
+| Script fails with `Missing TELEGRAM_BOT_TOKEN` | Modal secret not attached or misnamed | Run `modal secret list` to verify `telegram-secrets` exists. Ensure the secret name in `daily_spot_app.py` matches your secret name. |
+| Telegram returns `HTTP 401 Unauthorized` | Invalid bot token | Confirm no trailing spaces, quotation marks, or prefixes were included when creating the secret with `modal secret create`. |
+| Telegram returns `HTTP 400 Bad Request` | Bot interaction not initiated | Open the bot account in Telegram and press `/start` to allow inbound messages from the bot to your account. |
+| `ModuleNotFoundError: No module named 'finland_spot_bot'` | Hyphen in filename or file not added | Ensure your script is named with an underscore (`finland_spot_bot.py`) and is copied into the image definition using `.add_local_file(...)`. |
+| Prices for the next day do not appear | Premature execution | Nord Pool publishes final next-day prices between 13:45 and 14:00 EET. The 15:00 schedule provides a reliable 60-minute window for all exchange updates to clear. |
