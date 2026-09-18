@@ -6,7 +6,7 @@ on:
     # - Summer (EEST / UTC+3): 12:00 UTC
     # - Winter (EET / UTC+2):  13:00 UTC
     # To run at 15:00 year-round, set schedule.timezone:
-    - cron: '0 14 15 * *'      
+    - cron: '20 14 * * *'      
   workflow_dispatch: # Allows manual trigger from the GitHub web UI
 
 jobs:
