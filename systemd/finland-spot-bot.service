@@ -1,0 +1,16 @@
+[Unit]
+Description=Finland Spot Price Telegram Alert Bot
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/finland-spot-price-bot
+EnvironmentFile=-%h/finland-spot-price-bot/.env
+ExecStart=/usr/bin/python3 %h/finland-spot-price-bot/finland_spot_bot.py
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal

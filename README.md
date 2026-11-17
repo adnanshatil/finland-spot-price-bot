@@ -1,8 +1,6 @@
-# Finland Spot Price Telegram Alert: Setup & Architecture Guide
+# Finland Spot Price Telegram Alert: Ubuntu Setup & Architecture Guide
 
-A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead electricity spot prices and pushes a concise, color-coded daily digest to Telegram at 15:00 Europe/Helsinki time using Modal cloud infrastructure.
-
-> **Pricing & Tier Disclaimer**: Modal provides **$30 USD / ~€30 EUR in free compute credits every month** on their Community Tier. A lightweight job running for 3–5 seconds once per day consumes fractions of a cent per month, operating well within the complimentary monthly allowance at zero recurring cost.
+A lightweight, zero-dependency monitoring agent that tracks Finnish day-ahead electricity spot prices and pushes a concise, color-coded daily digest to Telegram at **15:00 Europe/Helsinki** time from an Ubuntu server using a native `systemd` timer.
 
 ---
 
@@ -19,20 +17,22 @@ A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead el
 │             Public API (api.porssisahko.net)           │
 │           JSON feed with rolling 48-hour spot rates    │
 └───────────────────────────┬────────────────────────────┘
-                            │ HTTPS GET
+                            │ HTTPS GET (Python stdlib urllib)
                             ▼
 ┌───────────────────────────────────────────────────────────┐
-│               Modal Serverless Cloud Runner               │
+│              Ubuntu Host (systemd --user timer)           │
 │          Scheduled: 15:00 Europe/Helsinki Daily           │
+│          Persistent=true (runs missed jobs on boot)       │
 │                                                           │
-│  1. Pulls pricing data for 14:00 today to 14:00 tomorrow  │
-│  2. Evaluates thresholds:                                 │
+│  1. Loads credentials from ~/finland-spot-price-bot/.env  │
+│  2. Pulls pricing data for 14:00 today to 14:00 tomorrow  │
+│  3. Evaluates thresholds:                                 │
 │       • < 10.00 c/kWh  --> Green  (🟢)                    │
 │       • 10.00-19.99 c  --> Orange (🟠)                    │
 │       • >= 20.00 c     --> Red    (🔴)                    │
-│  3. Compresses 24 discrete hours into grouped blocks      │
-│  4. Calculates average, lowest, and highest spread        │
-│  5. Formats monospace text for responsive rendering       │
+│  4. Compresses 24 discrete hours into grouped blocks      │
+│  5. Calculates average, lowest, and highest spread        │
+│  6. Formats monospace text for responsive rendering       │
 └───────────────────────────┬───────────────────────────────┘
                             │ HTTPS POST
                             ▼
@@ -45,181 +45,202 @@ A zero-maintenance, serverless monitoring agent that tracks Finnish day-ahead el
 ┌────────────────────────────────────────────────────────┐
 │                   Telegram Subscriber                  │
 │             Instant grouped summary view               │
-└───────────────────────────┌────────────────────────────┘
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 2. Project File Structure
 
-To deploy the service, organize your project directory as follows:
-
 ```text
-finland-spot-bot/
-├── daily_spot_app.py        # Modal serverless wrapper, container definition, & cron trigger
-├── finland_spot_bot.py      # Core data retrieval, interval grouping, & Telegram alert logic
-└── README.md                # System overview and operational runbook
+~/finland-spot-price-bot/
+├── .env                         # Local secret configuration (git-ignored)
+├── .env.example                 # Template for .env credentials
+├── .gitignore                   # Ensures .env and logs are never committed
+├── finland_spot_bot.py          # Zero-dependency Python 3 data fetch & Telegram alert script
+├── systemd/
+│   ├── finland-spot-bot.service # systemd user service definition (with auto-retry)
+│   └── finland-spot-bot.timer   # systemd user timer (15:00 Europe/Helsinki, Persistent=true)
+└── README.md                    # System overview and operational runbook
 ```
 
-> **Note on Naming Conventions**: Standard Python module imports require underscores rather than hyphens. Ensure your core script file is named `finland_spot_bot.py` (not `finland-spot-bot.py`) so `daily_spot_app.py` can import it cleanly.
+* **Zero External Dependencies**: `finland_spot_bot.py` uses only Python's built-in standard library (`urllib.request`, `json`, `datetime`, `zoneinfo`). No `pip install` or virtual environment (`.venv`) is required on Ubuntu.
 
 ---
 
-## 3. Telegram Bot Configuration
+## 3. Telegram Bot & Token Configuration
 
-Before deploying the runner, configure an endpoint bot and obtain your personal communication identifiers.
+### 3.1 Obtain Telegram Credentials
+1. **Bot Token (`TELEGRAM_BOT_TOKEN`)**:
+   * Open Telegram and message `@BotFather`.
+   * Send `/newbot` (or `/token` for an existing bot) and copy the HTTP API token (e.g., `123456789:ABCdefGHIjklMNOpqrSTUvwxYZ`).
+2. **Chat ID (`TELEGRAM_CHAT_ID`)**:
+   * Open a chat with your bot in Telegram and click **Start** (`/start`).
+   * Message `@userinfobot` in Telegram with `/start` and copy your numeric `Id` (e.g., `123456789`).
 
-### 3.1 Create the Notification Bot
-1. Open the Telegram application and search for the verified account `@BotFather`.
-2. Initiate a chat session by clicking **Start** or typing `/start`.
-3. Submit the command:
-   ```text
-   /newbot
-   ```
-4. Enter a user-friendly display name (e.g., `Finland Electricity Tracker`).
-5. Choose a globally unique username ending in `bot` (e.g., `fi_spot_alert_v1_bot`).
-6. Copy the HTTP API token emitted by BotFather. Store this string securely; it serves as your `TELEGRAM_BOT_TOKEN`.
+### 3.2 Update Tokens in `.env`
+All credentials live in `~/finland-spot-price-bot/.env` (which is ignored by Git so your tokens are never pushed to GitHub).
 
-### 3.2 Initialize Chat & Retrieve Chat ID
-A Telegram bot cannot originate an unsolicited message to an individual account without prior opt-in.
-1. Open the direct link provided by `@BotFather` (e.g., `t.me/fi_spot_alert_v1_bot`).
-2. Click **Start** to open a direct channel between your personal profile and the bot.
-3. Search for the account `@userinfobot` in Telegram and send `/start`.
-4. Copy the numeric ID from the response (e.g., `123456789`). This is your `TELEGRAM_CHAT_ID`.
-
----
-
-## 4. Local Environment Setup & Modal Installation
-
-Modern operating systems (macOS, Debian/Ubuntu) protect system-wide Python with PEP 668 (`externally-managed-environment`), preventing bare `pip install` commands. Always install Modal inside a dedicated virtual environment.
-
-### 4.1 Create and Activate Virtual Environment
-Open your terminal inside the `finland-spot-bot` directory and execute:
+To edit your tokens on Ubuntu (`adnan@192.168.2.2`):
 
 ```bash
-# Create an isolated virtual environment named .venv
-python3 -m venv .venv
-
-# Activate the virtual environment
-# On macOS / Linux:
-source .venv/bin/activate
-
-# On Windows (PowerShell):
-# .venv\Scripts\Activate.ps1
+nano ~/finland-spot-price-bot/.env
 ```
 
-Confirm that your terminal prompt shows `(.venv)`.
+Fill in your values:
 
-### 4.2 Install Modal Client
-With your virtual environment activated, install the Modal CLI:
-
-```bash
-pip install modal
+```ini
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
+TELEGRAM_CHAT_ID=123456789
 ```
 
-### 4.3 Authenticate Modal CLI
-Link your local terminal session to your Modal cloud account:
+Restrict file permissions so only your user account can read the file:
 
 ```bash
-modal setup
-```
-
-This command opens an authentication window in your default web browser. Sign in using GitHub or Google. Once authenticated, your local terminal registers an encrypted access token automatically.
-
----
-
-## 5. Modal Secret Configuration
-
-Credentials must never be hardcoded into version control or application files. Store them securely in Modal’s encrypted secret manager:
-
-```bash
-modal secret create telegram-secrets TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_HERE" TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"
-```
-
-Verify that the secret is registered:
-
-```bash
-modal secret list
+chmod 600 ~/finland-spot-price-bot/.env
 ```
 
 ---
 
-## 6. Scheduling, Timezone Logic, & Deployment
+## 4. Ubuntu Deployment & Scheduling (`systemd` Timer)
 
-### 6.1 Application Implementation Overview
-* **`finland_spot_bot.py`**: Handles API requests to `api.porssisahko.net`, computes price metrics, groups adjacent hours by cost thresholds, and dispatches the HTML payload to Telegram.
-* **`daily_spot_app.py`**: Defines a lightweight container image based on `debian-slim`, preinstalls `requests`, includes `finland_spot_bot.py`, attaches the `telegram-secrets` vault, and schedules execution with a native timezone cron expression.
+### Why `systemd` Timer Instead of Cron?
+* **Timezone & DST Aware**: `OnCalendar=*-*-* 15:00:00 Europe/Helsinki` automatically adjusts between winter time (EET, UTC+2) and summer time (EEST, UTC+3).
+* **Missed-Run Recovery (`Persistent=true`)**: If the Ubuntu host is powered off or rebooting at 15:00, `systemd` triggers the alert immediately once the system comes back online.
+* **Automatic Network Retry**: Both the Python script (3 attempts with exponential backoff) and the `systemd` unit (`Restart=on-failure`, `RestartSec=60`) automatically recover from temporary network glitches.
+* **Centralized Logging**: Every run is logged with timestamps via `journalctl`.
 
-### 6.2 Why Modal Cron Solves Daylight Saving Time (DST)
-* Finland transitions between Eastern European Time (EET, UTC+2) in winter and Eastern European Summer Time (EEST, UTC+3) in summer.
-* Modal natively supports IANA timezone definitions (`timezone="Europe/Helsinki"`) within its cron decorator (`0 15 * * *`). The engine recalculates UTC offsets automatically, executing at 15:00 local time every single day without manual cron adjustments.
-* Unlike general CI/CD queues, Modal scheduled functions fire on dedicated serverless infrastructure without queue delays.
-
-### 6.3 Deployment Commands
-
-#### Step 1: Execute an Instant Cloud Test
-Verify that your bot script and Telegram secrets operate correctly in the cloud before establishing the daily cron trigger:
+### 4.1 Install and Enable the User Timer
+On your Ubuntu machine (`adnan@192.168.2.2`):
 
 ```bash
-modal run daily_spot_app.py::run_spot_alert
+# 1. Create the user systemd directory
+mkdir -p ~/.config/systemd/user
+
+# 2. Copy the service and timer unit files
+cp ~/finland-spot-price-bot/systemd/finland-spot-bot.service ~/.config/systemd/user/
+cp ~/finland-spot-price-bot/systemd/finland-spot-bot.timer ~/.config/systemd/user/
+
+# 3. Reload systemd user daemon and enable the timer
+systemctl --user daemon-reload
+systemctl --user enable --now finland-spot-bot.timer
+
+# 4. Ensure user timers run even when logged out of SSH
+loginctl enable-linger "$USER"
 ```
 
-Within a few seconds, Modal will spin up a transient cloud container, run the script, and deliver the price alert directly to your Telegram chat.
+### 4.2 Alternative: Classic Cronjob (Optional)
+If you ever prefer a traditional `crontab` instead of the `systemd` timer, disable the timer (`systemctl --user disable --now finland-spot-bot.timer`) and add the following to `crontab -e`:
 
-#### Step 2: Deploy the Persistent Daily Schedule
-Publish the scheduled app to run continuously in the cloud:
-
-```bash
-modal deploy daily_spot_app.py
-```
-
-The terminal will return a deployment summary containing your application's permanent dashboard URL.
-
----
-
-## 7. Operational Management & Manual Triggers
-
-Once deployed, you do not need to keep your local machine powered on or connected to the internet.
-
-### 7.1 Triggering an On-Demand Run
-To test or force a run at any time without altering the 15:00 schedule:
-
-* **Using the Modal CLI**:
-  ```bash
-  modal run daily_spot_app.py::run_spot_alert
-  ```
-
-* **Using Remote Function Lookup (from any Python terminal)**:
-  ```bash
-  python3 -c "import modal; f = modal.Function.lookup('daily-spot-bot', 'run_spot_alert'); f.remote()"
-  ```
-
-* **Using the Web Dashboard**:
-  Open the [Modal Web Dashboard](https://modal.com/apps) or run:
-  ```bash
-  modal dashboard
-  ```
-  Navigate to `daily-spot-bot` and click **Run** on the `run_spot_alert` function.
-
-### 7.2 Viewing Real-Time Logs
-To stream live cloud execution logs directly to your local terminal:
-
-```bash
-modal app logs daily-spot-bot
-```
-
-### 7.3 Stopping or Deleting the Deployment
-If you ever want to pause or delete the scheduled alert:
-
-```bash
-modal app stop daily-spot-bot
+```cron
+CRON_TZ=Europe/Helsinki
+0 15 * * * /usr/bin/python3 /home/adnan/finland-spot-price-bot/finland_spot_bot.py >> /home/adnan/finland-spot-price-bot/spot_bot.log 2>&1
 ```
 
 ---
 
-## 8. Sample Notification Output
+## 5. Operational Management & Manual Testing
 
-The alert renders inside a monospace `<pre>` block to ensure uniform tabular column alignment across mobile and desktop clients:
+### 5.1 Test Price Fetching Without Sending to Telegram (`--dry-run`)
+Verify API connectivity and preview the formatted message in your terminal without needing valid Telegram credentials:
+
+```bash
+python3 ~/finland-spot-price-bot/finland_spot_bot.py --dry-run
+```
+
+### 5.2 Trigger an Immediate Telegram Alert
+Once your `.env` file has your real `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, test the full end-to-end alert at any time:
+
+```bash
+# Run directly via Python:
+python3 ~/finland-spot-price-bot/finland_spot_bot.py
+
+# Or trigger through systemd:
+systemctl --user start finland-spot-bot.service
+```
+
+### 5.3 Check Timer Schedule & Next Run Time
+```bash
+systemctl --user list-timers finland-spot-bot.timer
+```
+
+### 5.4 View Execution Logs
+```bash
+# View recent logs from the service
+journalctl --user -u finland-spot-bot.service -n 50 --no-pager
+
+# Follow logs in real time
+journalctl --user -u finland-spot-bot.service -f
+```
+
+---
+
+## 6. Reference Code
+
+### `finland_spot_bot.py`
+```python
+#!/usr/bin/env python3
+"""Finland Spot Price Telegram Alert Bot."""
+
+import argparse
+from collections import defaultdict
+import datetime
+import json
+import logging
+import os
+from pathlib import Path
+import sys
+import time
+import urllib.error
+import urllib.request
+import zoneinfo
+
+HELSINKI_TZ = zoneinfo.ZoneInfo("Europe/Helsinki")
+PRICES_API_URL = "https://api.porssisahko.net/v1/latest-prices.json"
+DEFAULT_ENV_PATH = Path(__file__).resolve().parent / ".env"
+```
+*(See [`finland_spot_bot.py`](./finland_spot_bot.py) in this repository for the full script.)*
+
+### `systemd/finland-spot-bot.service`
+```ini
+[Unit]
+Description=Finland Spot Price Telegram Alert Bot
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/finland-spot-price-bot
+EnvironmentFile=-%h/finland-spot-price-bot/.env
+ExecStart=/usr/bin/python3 %h/finland-spot-price-bot/finland_spot_bot.py
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+```
+
+### `systemd/finland-spot-bot.timer`
+```ini
+[Unit]
+Description=Run Finland Spot Price Telegram Alert daily at 15:00 Europe/Helsinki
+
+[Timer]
+OnCalendar=*-*-* 15:00:00 Europe/Helsinki
+Persistent=true
+AccuracySec=1s
+Unit=finland-spot-bot.service
+
+[Install]
+WantedBy=timers.target
+```
+
+---
+
+## 7. Sample Notification Output
+
+The alert renders inside a monospace `<pre>` block to ensure uniform tabular alignment across mobile and desktop clients:
 
 ```text
 ⚡ Finland Spot Prices
@@ -238,13 +259,12 @@ The alert renders inside a monospace `<pre>` block to ensure uniform tabular col
 
 ---
 
-## 9. Troubleshooting & Operational Runbook
+## 8. Troubleshooting & Operational Runbook
 
 | Observation | Root Cause | Remediation Procedure |
 | :--- | :--- | :--- |
-| `externally-managed-environment` error during install | System Python blocks raw pip installs | Create and activate a virtual environment (`python3 -m venv .venv && source .venv/bin/activate`) before running `pip install modal`. |
-| Script fails with `Missing TELEGRAM_BOT_TOKEN` | Modal secret not attached or misnamed | Run `modal secret list` to verify `telegram-secrets` exists. Ensure the secret name in `daily_spot_app.py` matches your secret name. |
-| Telegram returns `HTTP 401 Unauthorized` | Invalid bot token | Confirm no trailing spaces, quotation marks, or prefixes were included when creating the secret with `modal secret create`. |
-| Telegram returns `HTTP 400 Bad Request` | Bot interaction not initiated | Open the bot account in Telegram and press `/start` to allow inbound messages from the bot to your account. |
-| `ModuleNotFoundError: No module named 'finland_spot_bot'` | Hyphen in filename or file not added | Ensure your script is named with an underscore (`finland_spot_bot.py`) and is copied into the image definition using `.add_local_file(...)`. |
-| Prices for the next day do not appear | Premature execution | Nord Pool publishes final next-day prices between 13:45 and 14:00 EET. The 15:00 schedule provides a reliable 60-minute window for all exchange updates to clear. |
+| `Missing or placeholder TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID` | `.env` still contains placeholder values | Edit `~/finland-spot-price-bot/.env` and replace `YOUR_BOT_TOKEN_HERE` and `YOUR_CHAT_ID_HERE` with your actual credentials. |
+| Telegram returns `HTTP 401 Unauthorized` | Invalid bot token | Verify `TELEGRAM_BOT_TOKEN` in `.env` has no extra spaces or prefixes. |
+| Telegram returns `HTTP 400 Bad Request` | Bot interaction not initiated or invalid `CHAT_ID` | Open the bot in Telegram and send `/start`, and verify your numeric `TELEGRAM_CHAT_ID` via `@userinfobot`. |
+| Timer does not fire when logged out of SSH | User lingering not enabled | Run `loginctl enable-linger adnan` on Ubuntu so `systemd --user` stays active without an active SSH session. |
+| Next-day prices only show until midnight | Executed before 14:00 EET | Nord Pool publishes next-day prices between 13:45 and 14:00 EET. Running at 15:00 guarantees the full 24-hour window (`14:00–14:00`) is available. |

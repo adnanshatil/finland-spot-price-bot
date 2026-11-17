@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Finland Spot Price Telegram Alert daily at 15:00 Europe/Helsinki
+
+[Timer]
+OnCalendar=*-*-* 15:00:00 Europe/Helsinki
+Persistent=true
+AccuracySec=1s
+Unit=finland-spot-bot.service
+
+[Install]
+WantedBy=timers.target
